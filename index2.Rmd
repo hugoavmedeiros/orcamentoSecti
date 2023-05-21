@@ -1,0 +1,230 @@
+---
+title: "Orçamento Secti"
+output: 
+  flexdashboard::flex_dashboard:
+    logo: logo_PE.png
+    social: [ "twitter", "facebook", "linkedin"]
+    orientation: rows
+    navbar:
+        - { icon: "fa-whatsapp", href: "whatsapp://send?text=Compartilhe", align: right }
+    theme: yeti
+    vertical_layout: fill
+    # source_code: embed
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+### PACOTES
+pacman::p_load(crosstalk, data.table, dplyr, DT, d3scatter, flexdashboard, googlesheets4, htmltools, leaflet, leaflet.extras, lubridate, openxlsx, plotly, readxl, rgdal, scales, shiny, shinyWidgets, tidyverse)
+
+### BASE DE ORÇAMENTO - SECTI
+
+orcamentoSecti <- read_excel("../orcamento SECTI 2023.xlsx", sheet = "programas")
+
+orcamentoSectiLong <- orcamentoSecti %>% 
+  pivot_longer(
+    cols = c(`44927`:`45627`), 
+    names_to = "data",
+    values_to = "valor"
+)
+
+orcamentoSectiLong$data <- convertToDate(orcamentoSectiLong$data)
+orcamentoSectiLong$mes <- month(ymd(orcamentoSectiLong$data))
+orcamentoSectiLong$mesAno <- format_ISO8601(orcamentoSectiLong$data, precision = "ym")
+orcamentoSectiLong$ano <- as.factor(year(ymd(orcamentoSectiLong$data)))
+
+orcamentoSectiLong$diretoria <- as.factor(orcamentoSectiLong$diretoria)
+
+orcamentoSectiLong$tipo_projeto <- as.factor(orcamentoSectiLong$tipo_projeto)
+
+orcamentoSectiLong <- orcamentoSectiLong %>% arrange(diretoria)
+
+orcamentoLOA <- read_excel("../orcamento SECTI 2023.xlsx", sheet = "base")
+
+names(orcamentoSecti)[12:35] <-  format(as.Date(as.numeric(names(orcamentoSecti)[12:35]), origin = "1899-12-30"), "%d/%m/%Y")
+
+orcamentoSecti$tipo_projeto <- as.factor(orcamentoSecti$tipo_projeto)
+
+MillionForm <- dollar_format(prefix = "R$",suffix="M")
+
+### BASE DE ORÇAMENTO - SEFAZ
+
+orcamentoSEFAZ <- read_excel("../acoes SECTI.xlsx", sheet = "base")
+```
+
+Diretorias {data-icon="fa-percent"}
+=====================================  
+
+Inputs {.sidebar}
+-----------------------------------------------------------------------
+
+Utilize os filtros para selecionar os perfis de beneficiários que que você deseja analisar, com base em <strong> Tipo</strong>, <strong> Programa </strong>e <strong> Cidade</strong>.
+
+```{r}
+pickerInput(
+  "ano",
+  "Selecione o(s) ano(s)", 
+  choices=unique(levels(orcamentoSectiLong$ano)), 
+  selected = '2023', 
+  options = list(`actions-box` = TRUE),
+  multiple = T)
+
+pickerInput(
+  "diretoria",
+  "Selecione a diretoria",
+  choices=unique(levels(orcamentoSectiLong$diretoria)), 
+  selected = c('Administração', 'Ciência', 'Formação', "Inovação", "Tecnologia"), 
+  options = list(`actions-box` = TRUE),
+  multiple = T)
+
+pickerInput(
+  "tipo",
+  "Selecione o tipo",
+  choices=unique(levels(orcamentoSectiLong$tipo_projeto)), 
+  selected = c('Administrativo', 'Política Pública em Curso', 'Política Pública Nova'), 
+  options = list(`actions-box` = TRUE),
+  multiple = T)
+```
+
+Row {data-width=100%}
+-------------------------------------
+
+###
+
+```{r}
+renderValueBox({
+  
+orcamentoLOANovo <- orcamentoLOA %>% filter(GD == '3') %>% summarize(valor = sum(LOA)/1000) %>% as.numeric %>% round(0)
+#%>% prettyNum(big.mark = ".")
+
+valueBox(
+      MillionForm(orcamentoLOANovo/1000), "Orçamento LOA GD 3", icon = 'fa-dollar-sign',
+      color = "purple"
+    )
+})
+```
+
+###
+
+```{r}
+renderValueBox({
+  
+orcamentoLOANovo <- orcamentoLOA %>% filter(GD == '4') %>% summarize(valor = sum(LOA)/1000) %>% as.numeric %>% round(0)
+#%>% prettyNum(big.mark = ".")
+
+valueBox(
+      MillionForm(orcamentoLOANovo/1000), "Orçamento LOA GD 4", icon = 'fa-dollar-sign',
+      color = "purple"
+    )
+})
+```
+
+###
+
+```{r}
+renderValueBox({
+  
+dadosGrafico <- orcamentoSectiLong %>% filter(ano %in% input$ano, gd == 'GD 3', tipo_projeto %in% input$tipo) %>% summarize(valor = sum(valor)/1000) %>% as.numeric %>% round(0) 
+#%>% prettyNum(big.mark = ".")
+
+valueBox(
+      MillionForm(dadosGrafico/1000), "Planejamento Orçamentário GD 3", icon = 'fa-dollar-sign',
+      color = "blue"
+    )
+})
+```
+
+###
+
+```{r}
+renderValueBox({
+  
+dadosGrafico <- orcamentoSectiLong %>% filter(ano %in% input$ano, gd == 'GD 4', tipo_projeto %in% input$tipo) %>% summarize(valor = sum(valor)/1000) %>% as.numeric %>% round(0) 
+#%>% prettyNum(big.mark = ".")
+
+valueBox(
+      MillionForm(dadosGrafico/1000), "Planejamento Orçamentário GD 4", icon = 'fa-dollar-sign',
+      color = "blue"
+    )
+})
+```
+
+Row {data-width=100%}
+-------------------------------------
+
+###
+
+```{r}
+plotly::renderPlotly({
+  
+dadosGrafico <- orcamentoSectiLong %>% filter(ano %in% input$ano, diretoria %in% input$diretoria, tipo_projeto %in% input$tipo)
+
+dadosGrafico <- dadosGrafico %>% group_by(diretoria, mesAno) %>% summarise(valor = sum(valor))
+
+dadosGrafico %>% plot_ly(
+  x = ~mesAno, 
+  y = ~valor, 
+  type = 'bar', 
+  # mode = 'lines',
+  color = ~diretoria, 
+  colors = c('Administração' = 'purple', "Ciência" = "red", "Formação" = "darkgreen", "Inovação" = "blue", "Tecnologia" = "goldenrod"), 
+  hovertemplate = paste('<i>Valor</i>: %{y:$,.0f}',
+                        '<br><b>Mês / Ano</b>: %{x}<br>'),
+  marker = list(line = list(color = 'black', width = 1.5))
+  ) %>% 
+  layout(
+    barmode = 'group', 
+    title = "", 
+    legend = 1, 
+    xaxis = list(rangemode = "tozero", categoryorder = "category ascending", title = ''),
+    yaxis = list(rangemode = "tozero", title = '')
+               )
+})
+```
+
+Row {data-width=100%}
+-------------------------------------
+
+###
+
+```{r}
+plotly::renderPlotly({
+  
+dadosGrafico <- orcamentoSectiLong %>% filter(ano %in% input$ano, tipo_projeto %in% input$tipo)
+
+dadosGrafico <- dadosGrafico %>% group_by(diretoria, gd, ano) %>% summarise(valor = sum(valor))
+
+dadosGrafico %>% plot_ly(
+  x = ~gd, 
+  y = ~valor, 
+  type = 'bar',
+  color = ~diretoria, 
+  colors = c('Administração' = 'purple', "Ciência" = "red", "Formação" = "darkgreen", "Inovação" = "blue", "Tecnologia" = "goldenrod"),
+  marker = list(line = list(color = 'black', width = 1.5))
+  # text = ~valor, textposition = 'auto'
+  ) %>% 
+  layout(
+    barmode = 'group', 
+    title = "", 
+    legend = 1, 
+    xaxis = list(categoryorder = "category ascending", title = ''),
+    yaxis = list(title = '')
+    )
+})
+```
+
+Detalhamento {data-icon="fa-bars"}
+=====================================  
+
+Row {data-width=100%}
+-------------------------------------
+
+###
+
+```{r}
+
+renderDataTable ({
+  orcamentoSecti %>% 
+  datatable()
+})
+```
